@@ -1,6 +1,0 @@
-services:
-  he-ran-somewhere:
-    build: .
-    image: he-ran-somewhere
-    volumes:
-      - ./root:/root
