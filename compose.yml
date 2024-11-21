@@ -3,4 +3,4 @@ services:
     build: .
     image: he-ran-somewhere
     volumes:
-      - ./testuser:/home/testuser
+      - ./root:/root
