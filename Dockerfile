@@ -6,10 +6,7 @@ RUN apt update
 RUN apt install -y python3
 RUN apt install -y python3-pip
 RUN apt install -y python3-venv
+RUN apt install -y python3-cryptography
 RUN apt install -y vim
 
-RUN useradd -m testuser
-
-WORKDIR /home/testuser
-
-USER testuser
+WORKDIR /root
