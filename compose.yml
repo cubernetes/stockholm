@@ -1,11 +1,6 @@
-version: '3.8'
-
 services:
   he-ran-somewhere:
     build: .
     image: he-ran-somewhere
     volumes:
       - ./testuser:/home/testuser
-    command: bash
-    stdin_open: true
-    tty: true
